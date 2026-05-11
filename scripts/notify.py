@@ -11,12 +11,13 @@ def parse_args():
     parser.add_argument("--status",        required=True,  choices=["success", "failure"])
     parser.add_argument("--job-name",      required=True,  help="Jenkins job name")
     parser.add_argument("--build-number",  required=True,  help="Jenkins build number")
+    parser.add_argument("--text",          required=False, help="Override notification text")
     return parser.parse_args()
 
 
 def send_message(bot_token, chat_id, text):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    resp = requests.post(url, data={"chat_id": chat_id, "text": text})
+    resp = requests.post(url, data={"chat_id": chat_id, "text": text}, timeout=15)
     resp.raise_for_status()
     return resp.json()
 
@@ -24,7 +25,9 @@ def send_message(bot_token, chat_id, text):
 def main():
     args = parse_args()
 
-    if args.status == "success":
+    if args.text:
+        text = args.text
+    elif args.status == "success":
         text = f"✅ SUCCESS: {args.job_name} #{args.build_number}"
     else:
         text = f"❌ FAILED: {args.job_name} #{args.build_number}"

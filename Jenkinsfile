@@ -39,64 +39,43 @@ pipeline {
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
                         --ignore-unfixed \
-                        ${IMAGE_NAME} > trivy-report.txt 2>&1
+                        --format json \
+                        -o trivy-report.json \
+                        ${IMAGE_NAME} 2>/dev/null || true
+
+                    trivy image \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --ignore-unfixed \
+                        ${IMAGE_NAME} > trivy-report.txt 2>&1 || true
                 '''
 
-                script {
-                    def reportContent = readFile('trivy-report.txt').trim()
-
-                    // Đếm số CVE HIGH và CRITICAL
-                    def highCount = sh(
-                        script: "grep -c ' HIGH ' trivy-report.txt || true",
-                        returnStdout: true
-                    ).trim()
-
-                    def criticalCount = sh(
-                        script: "grep -c ' CRITICAL ' trivy-report.txt || true",
-                        returnStdout: true
-                    ).trim()
-
-                    def hasVulns = sh(
-                        script: "grep -qE 'HIGH|CRITICAL' trivy-report.txt && echo 'yes' || echo 'no'",
-                        returnStdout: true
-                    ).trim()
-
-                    if (hasVulns == 'yes') {
-                        // Tạo summary message
-                        writeFile file: 'telegram-summary.txt', text: """\
-⚠️ Trivy Vulnerabilities Detected
-
-Job: ${JOB_NAME}
-Build: #${BUILD_NUMBER}
-Image: ${IMAGE_NAME}
-
-Total: HIGH=${highCount}, CRITICAL=${criticalCount}
-
-📎 Full CVE report attached below.
-"""
-                        withCredentials([
-                            string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
-                            string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
-                        ]) {
-                            // Gửi summary message
-                            sh '''
-                                curl -s -X POST \
-                                    https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
-                                    -d chat_id=$CHAT_ID \
-                                    --data-urlencode text@telegram-summary.txt
+                withCredentials([
+                    string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
+                    string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
+                ]) {
+                    script {
+                        def rc = sh(
+                            returnStatus: true,
+                            script: '''
+                                python3 scripts/trivy_notify.py \
+                                    --report trivy-report.txt \
+                                    --report-json trivy-report.json \
+                                    --bot-token $BOT_TOKEN \
+                                    --chat-id $CHAT_ID \
+                                    --job-name "${JOB_NAME}" \
+                                    --build-number "${BUILD_NUMBER}" \
+                                    --image "${IMAGE_NAME}"
                             '''
+                        )
 
-                            // Gửi full report dưới dạng file đính kèm
-                            sh '''
-                                curl -s -X POST \
-                                    https://api.telegram.org/bot$BOT_TOKEN/sendDocument \
-                                    -F chat_id=$CHAT_ID \
-                                    -F document=@trivy-report.txt \
-                                    -F caption="Full Trivy Report - ${JOB_NAME} #${BUILD_NUMBER}"
-                            '''
+                        if (rc == 2) {
+                            env.TRIVY_FAILED = "1"
+                            currentBuild.result = 'UNSTABLE'
+                            echo "Trivy found HIGH/CRITICAL vulnerabilities. Marking build UNSTABLE and continuing."
+                        } else if (rc != 0) {
+                            error("Trivy notification step failed (unexpected exit code: " + rc + ").")
                         }
-                    } else {
-                        echo "No HIGH/CRITICAL vulnerabilities found."
                     }
                 }
             }
@@ -118,15 +97,40 @@ Total: HIGH=${highCount}, CRITICAL=${criticalCount}
 
     post {
         success {
+            script {
+                if (env.TRIVY_FAILED != "1") {
+                    withCredentials([
+                        string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
+                        string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
+                    ]) {
+                        sh '''
+                            python3 scripts/notify.py \
+                                --bot-token $BOT_TOKEN \
+                                --chat-id $CHAT_ID \
+                                --status success \
+                                --job-name "${JOB_NAME}" \
+                                --build-number "${BUILD_NUMBER}"
+                        '''
+                    }
+                } else {
+                    echo "Skipping success Telegram notification due to Trivy failure."
+                }
+            }
+        }
+
+        unstable {
             withCredentials([
                 string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
                 string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
             ]) {
                 sh '''
-                    curl -s -X POST \
-                        https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
-                        -d chat_id=$CHAT_ID \
-                        -d text="✅ SUCCESS: ${JOB_NAME} #${BUILD_NUMBER}"
+                    python3 scripts/notify.py \
+                        --bot-token $BOT_TOKEN \
+                        --chat-id $CHAT_ID \
+                        --status failure \
+                        --text "⚠️ UNSTABLE (Trivy): ${JOB_NAME} #${BUILD_NUMBER} (deployed for further testing)" \
+                        --job-name "${JOB_NAME}" \
+                        --build-number "${BUILD_NUMBER}"
                 '''
             }
         }
@@ -137,10 +141,13 @@ Total: HIGH=${highCount}, CRITICAL=${criticalCount}
                 string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
             ]) {
                 sh '''
-                    curl -s -X POST \
-                        https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
-                        -d chat_id=$CHAT_ID \
-                        -d text="❌ FAILED: ${JOB_NAME} #${BUILD_NUMBER}"
+                    python3 scripts/notify.py \
+                        --bot-token $BOT_TOKEN \
+                        --chat-id $CHAT_ID \
+                        --status failure \
+                        --text "❌ FAILED: ${JOB_NAME} #${BUILD_NUMBER}" \
+                        --job-name "${JOB_NAME}" \
+                        --build-number "${BUILD_NUMBER}"
                 '''
             }
         }
