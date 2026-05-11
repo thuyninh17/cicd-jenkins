@@ -34,47 +34,69 @@ pipeline {
 
         stage('Trivy Scan') {
             steps {
-
                 sh '''
-                trivy image \
-                --scanners vuln \
-                --severity HIGH,CRITICAL \
-                --ignore-unfixed \
-                ${IMAGE_NAME} > trivy-report.txt
+                    trivy image \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --ignore-unfixed \
+                        ${IMAGE_NAME} > trivy-report.txt 2>&1
                 '''
 
                 script {
+                    def reportContent = readFile('trivy-report.txt').trim()
 
-                    def filtered = sh(
-                        script: """
-                        grep -E 'CRITICAL|HIGH' trivy-report.txt | head -20
-                        """,
+                    // Đếm số CVE HIGH và CRITICAL
+                    def highCount = sh(
+                        script: "grep -c ' HIGH ' trivy-report.txt || true",
                         returnStdout: true
                     ).trim()
 
-                    if (filtered) {
+                    def criticalCount = sh(
+                        script: "grep -c ' CRITICAL ' trivy-report.txt || true",
+                        returnStdout: true
+                    ).trim()
 
-                        writeFile file: 'telegram.txt', text: """
+                    def hasVulns = sh(
+                        script: "grep -qE 'HIGH|CRITICAL' trivy-report.txt && echo 'yes' || echo 'no'",
+                        returnStdout: true
+                    ).trim()
+
+                    if (hasVulns == 'yes') {
+                        // Tạo summary message
+                        writeFile file: 'telegram-summary.txt', text: """\
 ⚠️ Trivy Vulnerabilities Detected
 
 Job: ${JOB_NAME}
 Build: #${BUILD_NUMBER}
+Image: ${IMAGE_NAME}
 
-${filtered}
+Total: HIGH=${highCount}, CRITICAL=${criticalCount}
+
+📎 Full CVE report attached below.
 """
-
                         withCredentials([
                             string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
                             string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
                         ]) {
-
+                            // Gửi summary message
                             sh '''
-                            curl -s -X POST \
-                            https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
-                            -d chat_id=$CHAT_ID \
-                            --data-urlencode text@telegram.txt
+                                curl -s -X POST \
+                                    https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
+                                    -d chat_id=$CHAT_ID \
+                                    --data-urlencode text@telegram-summary.txt
+                            '''
+
+                            // Gửi full report dưới dạng file đính kèm
+                            sh '''
+                                curl -s -X POST \
+                                    https://api.telegram.org/bot$BOT_TOKEN/sendDocument \
+                                    -F chat_id=$CHAT_ID \
+                                    -F document=@trivy-report.txt \
+                                    -F caption="Full Trivy Report - ${JOB_NAME} #${BUILD_NUMBER}"
                             '''
                         }
+                    } else {
+                        echo "No HIGH/CRITICAL vulnerabilities found."
                     }
                 }
             }
@@ -82,49 +104,43 @@ ${filtered}
 
         stage('Deploy Container') {
             steps {
-
                 sh '''
-                docker rm -f ${CONTAINER_NAME} || true
+                    docker rm -f ${CONTAINER_NAME} || true
 
-                docker run -d \
-                --name ${CONTAINER_NAME} \
-                -p 3000:3000 \
-                ${IMAGE_NAME}
+                    docker run -d \
+                        --name ${CONTAINER_NAME} \
+                        -p 3000:3000 \
+                        ${IMAGE_NAME}
                 '''
             }
         }
     }
 
     post {
-
         success {
-
             withCredentials([
                 string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
                 string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
             ]) {
-
                 sh '''
-                curl -s -X POST \
-                https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
-                -d chat_id=$CHAT_ID \
-                -d text="✅ SUCCESS: ${JOB_NAME} #${BUILD_NUMBER}"
+                    curl -s -X POST \
+                        https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
+                        -d chat_id=$CHAT_ID \
+                        -d text="✅ SUCCESS: ${JOB_NAME} #${BUILD_NUMBER}"
                 '''
             }
         }
 
         failure {
-
             withCredentials([
                 string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
                 string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
             ]) {
-
                 sh '''
-                curl -s -X POST \
-                https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
-                -d chat_id=$CHAT_ID \
-                -d text="❌ FAILED: ${JOB_NAME} #${BUILD_NUMBER}"
+                    curl -s -X POST \
+                        https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
+                        -d chat_id=$CHAT_ID \
+                        -d text="❌ FAILED: ${JOB_NAME} #${BUILD_NUMBER}"
                 '''
             }
         }
