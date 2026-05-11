@@ -8,13 +8,6 @@ pipeline {
 
     stages {
 
-        stage('Clone') {
-            steps {
-                git branch: 'main',
-                url: 'https://github.com/thuyninh17/cicd-jenkins.git'
-            }
-        }
-
         stage('Install Dependencies') {
             steps {
                 sh 'npm install'
@@ -35,25 +28,64 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                sh 'docker build -t $IMAGE_NAME .'
+                sh 'docker build -t ${IMAGE_NAME} .'
             }
         }
 
-        stage('Security Scan') {
+        stage('Trivy Scan') {
             steps {
-                sh 'npm audit --audit-level=high || true'
+                sh '''
+                trivy image \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                --ignore-unfixed \
+                ${IMAGE_NAME}
+                '''
             }
         }
 
         stage('Deploy Container') {
             steps {
                 sh '''
-                docker rm -f $CONTAINER_NAME || true
+                docker rm -f ${CONTAINER_NAME} || true
 
                 docker run -d \
-                  --name $CONTAINER_NAME \
-                  -p 3000:3000 \
-                  $IMAGE_NAME
+                --name ${CONTAINER_NAME} \
+                -p 3000:3000 \
+                ${IMAGE_NAME}
+                '''
+            }
+        }
+    }
+
+    post {
+
+        success {
+
+            withCredentials([
+                string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
+                string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
+            ]) {
+
+                sh '''
+                curl -s -X POST https://api.telegram.org/bot${BOT_TOKEN}/sendMessage \
+                -d chat_id=${CHAT_ID} \
+                -d text="✅ SUCCESS: ${JOB_NAME} #${BUILD_NUMBER}"
+                '''
+            }
+        }
+
+        failure {
+
+            withCredentials([
+                string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
+                string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
+            ]) {
+
+                sh '''
+                curl -s -X POST https://api.telegram.org/bot${BOT_TOKEN}/sendMessage \
+                -d chat_id=${CHAT_ID} \
+                -d text="❌ FAILED: ${JOB_NAME} #${BUILD_NUMBER}"
                 '''
             }
         }
