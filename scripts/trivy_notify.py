@@ -19,16 +19,18 @@ def parse_args():
 
 def count_severity(lines, severity):
     """
-    Đếm số dòng CVE thực sự trong bảng Trivy.
-    Mỗi dòng CVE có format: │ package │ CVE-XXXX │ HIGH │ ...
+    Đếm số CVE dựa vào pattern 'CVE-XXXX-XXXX' xuất hiện trên cùng dòng với severity.
+    Tránh dùng ký tự │ vì có thể bị encoding khác nhau.
     """
-    pattern = re.compile(r'│.*\b' + severity + r'\b')
+    pattern = re.compile(r'CVE-\d{4}-\d+.*' + severity + r'|' + severity + r'.*CVE-\d{4}-\d+')
     return sum(1 for line in lines if pattern.search(line))
 
 
 def has_vulnerabilities(lines):
-    pattern = re.compile(r'│.*(HIGH|CRITICAL)')
-    return any(pattern.search(line) for line in lines)
+    return any(
+        re.search(r'CVE-\d{4}-\d+.*(HIGH|CRITICAL)|(HIGH|CRITICAL).*CVE-\d{4}-\d+', line)
+        for line in lines
+    )
 
 
 def send_message(bot_token, chat_id, text):
@@ -62,6 +64,8 @@ def main():
 
     high_count     = count_severity(lines, "HIGH")
     critical_count = count_severity(lines, "CRITICAL")
+
+    print(f"[DEBUG] HIGH={high_count}, CRITICAL={critical_count}")
 
     summary = (
         f"⚠️ Trivy Vulnerabilities Detected\n\n"
