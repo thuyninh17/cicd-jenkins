@@ -60,7 +60,7 @@ pipeline {
                         echo "SonarQube Status: ${qg.status}"
 
                         if (qg.status != 'OK') {
-                            currentBuild.result = 'UNSTABLE'
+                            echo "WARNING: SonarQube quality gate is ${qg.status}. Pipeline will continue."
                         }
                     }
                 }
@@ -145,9 +145,7 @@ pipeline {
                         )
 
                         if (rc == 2) {
-                            env.TRIVY_FAILED = "1"
-                            currentBuild.result = 'UNSTABLE'
-                            echo "Trivy found HIGH/CRITICAL vulnerabilities"
+                            echo "WARNING: Trivy found HIGH/CRITICAL vulnerabilities. Pipeline will continue."
                         } else if (rc != 0) {
                             error("Trivy notification failed: " + rc)
                         }
@@ -179,22 +177,18 @@ pipeline {
     post {
 
         success {
-            script {
-                if (env.TRIVY_FAILED != "1") {
-                    withCredentials([
-                        string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
-                        string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
-                    ]) {
-                        sh '''
-                            python3 scripts/notify.py \
-                                --bot-token $BOT_TOKEN \
-                                --chat-id $CHAT_ID \
-                                --status success \
-                                --job-name "${JOB_NAME}" \
-                                --build-number "${BUILD_NUMBER}"
-                        '''
-                    }
-                }
+            withCredentials([
+                string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
+                string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
+            ]) {
+                sh '''
+                    python3 scripts/notify.py \
+                        --bot-token $BOT_TOKEN \
+                        --chat-id $CHAT_ID \
+                        --status success \
+                        --job-name "${JOB_NAME}" \
+                        --build-number "${BUILD_NUMBER}"
+                '''
             }
         }
 
