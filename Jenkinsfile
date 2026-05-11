@@ -26,6 +26,35 @@ pipeline {
             }
         }
 
+        // =========================
+        // SONARQUBE SCAN (NEW)
+        // =========================
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    sh '''
+                        sonar-scanner \
+                            -Dsonar.projectKey=nestjs-backend \
+                            -Dsonar.projectName=nestjs-backend \
+                            -Dsonar.sources=. \
+                            -Dsonar.host.url=http://<SONAR_IP>:9000 \
+                            -Dsonar.login=$SONAR_TOKEN
+                    '''
+                }
+            }
+        }
+
+        // =========================
+        // QUALITY GATE (NEW)
+        // =========================
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
         stage('Docker Build') {
             steps {
                 sh 'docker build -t ${IMAGE_NAME} .'
@@ -72,9 +101,9 @@ pipeline {
                         if (rc == 2) {
                             env.TRIVY_FAILED = "1"
                             currentBuild.result = 'UNSTABLE'
-                            echo "Trivy found HIGH/CRITICAL vulnerabilities. Marking build UNSTABLE and continuing."
+                            echo "Trivy found HIGH/CRITICAL vulnerabilities. Marking build UNSTABLE."
                         } else if (rc != 0) {
-                            error("Trivy notification step failed (unexpected exit code: " + rc + ").")
+                            error("Trivy notification failed: " + rc)
                         }
                     }
                 }
@@ -112,8 +141,6 @@ pipeline {
                                 --build-number "${BUILD_NUMBER}"
                         '''
                     }
-                } else {
-                    echo "Skipping success Telegram notification due to Trivy failure."
                 }
             }
         }
@@ -128,7 +155,7 @@ pipeline {
                         --bot-token $BOT_TOKEN \
                         --chat-id $CHAT_ID \
                         --status failure \
-                        --text "⚠️ UNSTABLE (Trivy): ${JOB_NAME} #${BUILD_NUMBER} (deployed for further testing)" \
+                        --text "⚠️ UNSTABLE: ${JOB_NAME} #${BUILD_NUMBER}" \
                         --job-name "${JOB_NAME}" \
                         --build-number "${BUILD_NUMBER}"
                 '''
