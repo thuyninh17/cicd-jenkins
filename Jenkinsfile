@@ -28,7 +28,7 @@ pipeline {
         }
 
         // =========================
-        // SONARQUBE SCAN (NEW)
+        // SONAR SCAN
         // =========================
         stage('SonarQube Analysis') {
             steps {
@@ -46,22 +46,67 @@ pipeline {
         }
 
         // =========================
-        // QUALITY GATE (NEW)
+        // QUALITY GATE (CAPTURE STATUS)
         // =========================
         stage('Quality Gate') {
             steps {
                 timeout(time: 55, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                    script {
+                        def qg = waitForQualityGate()
+                        env.SONAR_STATUS = qg.status
+
+                        echo "SonarQube Status: ${qg.status}"
+
+                        if (qg.status != 'OK') {
+                            currentBuild.result = 'UNSTABLE'
+                        }
+                    }
                 }
             }
         }
 
+        // =========================
+        // SONAR TELEGRAM NOTIFY
+        // =========================
+        stage('Sonar Notification') {
+            steps {
+                script {
+                    def emoji = (env.SONAR_STATUS == 'OK') ? "✅" : "⚠️"
+
+                    def message = """
+${emoji} SONARQUBE RESULT
+Project: ${env.JOB_NAME}
+Build: #${env.BUILD_NUMBER}
+Status: ${env.SONAR_STATUS}
+Dashboard: http://192.168.234.133:9000/dashboard?id=nestjs-backend
+"""
+
+                    withCredentials([
+                        string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
+                        string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
+                    ]) {
+                        sh """
+                            curl -s -X POST https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
+                            -d chat_id=$CHAT_ID \
+                            -d text="$message"
+                        """
+                    }
+                }
+            }
+        }
+
+        // =========================
+        // DOCKER BUILD
+        // =========================
         stage('Docker Build') {
             steps {
                 sh 'docker build -t ${IMAGE_NAME} .'
             }
         }
 
+        // =========================
+        // TRIVY SCAN
+        // =========================
         stage('Trivy Scan') {
             steps {
                 sh '''
@@ -102,7 +147,7 @@ pipeline {
                         if (rc == 2) {
                             env.TRIVY_FAILED = "1"
                             currentBuild.result = 'UNSTABLE'
-                            echo "Trivy found HIGH/CRITICAL vulnerabilities. Marking build UNSTABLE."
+                            echo "Trivy found HIGH/CRITICAL vulnerabilities"
                         } else if (rc != 0) {
                             error("Trivy notification failed: " + rc)
                         }
@@ -111,6 +156,9 @@ pipeline {
             }
         }
 
+        // =========================
+        // DEPLOY
+        // =========================
         stage('Deploy Container') {
             steps {
                 sh '''
@@ -125,7 +173,11 @@ pipeline {
         }
     }
 
+    // =========================
+    // FINAL NOTIFICATIONS
+    // =========================
     post {
+
         success {
             script {
                 if (env.TRIVY_FAILED != "1") {
