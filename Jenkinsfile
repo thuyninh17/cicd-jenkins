@@ -37,7 +37,7 @@ pipeline {
                             -Dsonar.projectKey=nestjs-backend \
                             -Dsonar.projectName=nestjs-backend \
                             -Dsonar.sources=. \
-                            -Dsonar.host.url=http://<SONAR_IP>:9000 \
+                            -Dsonar.host.url=http://192.168.234.133133:9000 \
                             -Dsonar.login=$SONAR_TOKEN
                     '''
                 }
