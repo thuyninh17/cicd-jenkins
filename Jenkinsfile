@@ -4,6 +4,8 @@ pipeline {
     environment {
         IMAGE_NAME = "nestjs-backend"
         CONTAINER_NAME = "nestjs-app"
+        SONAR_PROJECT_KEY = "nestjs-backend"
+        SONAR_HOST_URL = "http://192.168.234.133:9000"
         SONAR_TOKEN = credentials('sonar-token')
     }
 
@@ -35,10 +37,10 @@ pipeline {
                 withSonarQubeEnv('sonarqube') {
                     sh '''
                         sonar-scanner \
-                            -Dsonar.projectKey=nestjs-backend \
-                            -Dsonar.projectName=nestjs-backend \
+                            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
+                            -Dsonar.projectName=$SONAR_PROJECT_KEY \
                             -Dsonar.sources=. \
-                            -Dsonar.host.url=http://192.168.234.133:9000 \
+                            -Dsonar.host.url=$SONAR_HOST_URL \
                             -Dsonar.login=$SONAR_TOKEN
                     '''
                 }
@@ -71,24 +73,22 @@ pipeline {
         stage('Sonar Notification') {
             steps {
                 script {
-                    def emoji = (env.SONAR_STATUS == 'OK') ? "✅" : "⚠️"
-
-                    def message = """
-${emoji} SONARQUBE RESULT
-Project: ${env.JOB_NAME}
-Build: #${env.BUILD_NUMBER}
-Status: ${env.SONAR_STATUS}
-Dashboard: http://192.168.234.133:9000/dashboard?id=nestjs-backend
-"""
-
                     withCredentials([
                         string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
                         string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
                     ]) {
                         sh """
-                            curl -s -X POST https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
-                            -d chat_id=$CHAT_ID \
-                            -d text="$message"
+                            python3 scripts/sonar_notify.py \
+                                --sonar-host "${SONAR_HOST_URL}" \
+                                --project-key "${SONAR_PROJECT_KEY}" \
+                                --sonar-token "${SONAR_TOKEN}" \
+                                --quality-gate "${SONAR_STATUS}" \
+                                --bot-token "$BOT_TOKEN" \
+                                --chat-id "$CHAT_ID" \
+                                --job-name "${JOB_NAME}" \
+                                --build-number "${BUILD_NUMBER}" \
+                                --build-url "${BUILD_URL}" \
+                                --branch-name "${BRANCH_NAME}"
                         """
                     }
                 }
