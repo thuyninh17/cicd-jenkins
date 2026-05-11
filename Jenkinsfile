@@ -37,6 +37,7 @@ pipeline {
 
                 sh '''
                 trivy image \
+                --scanners vuln \
                 --severity HIGH,CRITICAL \
                 --ignore-unfixed \
                 ${IMAGE_NAME} > trivy-report.txt
@@ -44,25 +45,35 @@ pipeline {
 
                 script {
 
-                    def report = readFile('trivy-report.txt')
+                    def filtered = sh(
+                        script: """
+                        grep -E 'CRITICAL|HIGH' trivy-report.txt | head -20
+                        """,
+                        returnStdout: true
+                    ).trim()
 
-                    if (report.contains("HIGH:") || report.contains("CRITICAL:")) {
+                    if (filtered) {
+
+                        writeFile file: 'telegram.txt', text: """
+⚠️ Trivy Vulnerabilities Detected
+
+Job: ${JOB_NAME}
+Build: #${BUILD_NUMBER}
+
+${filtered}
+"""
 
                         withCredentials([
                             string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
                             string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
                         ]) {
 
-                            sh """
-                            curl -s -X POST https://api.telegram.org/bot${BOT_TOKEN}/sendMessage \
-                            -d chat_id=${CHAT_ID} \
-                            --data-urlencode text='⚠️ Trivy Vulnerabilities Detected
-
-Job: ${JOB_NAME}
-Build: #${BUILD_NUMBER}
-
-${report}'
-                            """
+                            sh '''
+                            curl -s -X POST \
+                            https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
+                            -d chat_id=$CHAT_ID \
+                            --data-urlencode text@telegram.txt
+                            '''
                         }
                     }
                 }
@@ -94,8 +105,9 @@ ${report}'
             ]) {
 
                 sh '''
-                curl -s -X POST https://api.telegram.org/bot${BOT_TOKEN}/sendMessage \
-                -d chat_id=${CHAT_ID} \
+                curl -s -X POST \
+                https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
+                -d chat_id=$CHAT_ID \
                 -d text="✅ SUCCESS: ${JOB_NAME} #${BUILD_NUMBER}"
                 '''
             }
@@ -109,8 +121,9 @@ ${report}'
             ]) {
 
                 sh '''
-                curl -s -X POST https://api.telegram.org/bot${BOT_TOKEN}/sendMessage \
-                -d chat_id=${CHAT_ID} \
+                curl -s -X POST \
+                https://api.telegram.org/bot$BOT_TOKEN/sendMessage \
+                -d chat_id=$CHAT_ID \
                 -d text="❌ FAILED: ${JOB_NAME} #${BUILD_NUMBER}"
                 '''
             }
