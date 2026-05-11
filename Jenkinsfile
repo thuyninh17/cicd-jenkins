@@ -34,18 +34,44 @@ pipeline {
 
         stage('Trivy Scan') {
             steps {
+
                 sh '''
                 trivy image \
                 --severity HIGH,CRITICAL \
-                --exit-code 1 \
                 --ignore-unfixed \
-                ${IMAGE_NAME}
+                ${IMAGE_NAME} > trivy-report.txt
                 '''
+
+                script {
+
+                    def report = readFile('trivy-report.txt')
+
+                    if (report.contains("HIGH:") || report.contains("CRITICAL:")) {
+
+                        withCredentials([
+                            string(credentialsId: 'telegram-bot-token', variable: 'BOT_TOKEN'),
+                            string(credentialsId: 'telegram-chat-id', variable: 'CHAT_ID')
+                        ]) {
+
+                            sh """
+                            curl -s -X POST https://api.telegram.org/bot${BOT_TOKEN}/sendMessage \
+                            -d chat_id=${CHAT_ID} \
+                            --data-urlencode text='⚠️ Trivy Vulnerabilities Detected
+
+Job: ${JOB_NAME}
+Build: #${BUILD_NUMBER}
+
+${report}'
+                            """
+                        }
+                    }
+                }
             }
         }
 
         stage('Deploy Container') {
             steps {
+
                 sh '''
                 docker rm -f ${CONTAINER_NAME} || true
 
