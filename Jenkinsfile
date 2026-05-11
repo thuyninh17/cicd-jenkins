@@ -4,6 +4,7 @@ pipeline {
     environment {
         IMAGE_NAME = "nestjs-backend"
         CONTAINER_NAME = "nestjs-app"
+        SONAR_TOKEN = credentials('sonar-token')
     }
 
     stages {
